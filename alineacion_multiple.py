@@ -276,8 +276,15 @@ def align_two_groups(group1: list[list], group2: list[list]) -> tuple[list[list]
     gaps1 = _gap_positions(rep1, a1)
     gaps2 = _gap_positions(rep2, a2)
 
-    new_group1 = [_insert_gaps(seq, gaps1) for seq in group1]
-    new_group2 = [_insert_gaps(seq, gaps2) for seq in group2]
+    new_group1 = []
+    for seq in group1:
+        seq_con_x = [('X' if c == '-' else c) for c in seq]
+        new_group1.append(_insert_gaps(seq_con_x, gaps1))
+        
+    new_group2 = []
+    for seq in group2:
+        seq_con_x = [('X' if c == '-' else c) for c in seq]
+        new_group2.append(_insert_gaps(seq_con_x, gaps2))
 
     return new_group1, new_group2
 
@@ -397,7 +404,8 @@ def multiple_sequence_alignment(sequences: list[str],
         seq = name_to_aligned.get(name, [])
         while len(seq) < max_len:
             seq.append('-')
-        print(f"  {name:>6}: {''.join(seq)}")
+        seq =''.join(seq).replace('-','X')
+        print(f"  {name:>6}: {seq}")
 
     # 5. Remover X y mostrar resultado limpio
     clean = []
@@ -418,7 +426,7 @@ def multiple_sequence_alignment(sequences: list[str],
 
 
 # ─────────────────────────────────────────────
-# 6. EJEMPLOS DE PRUEBA
+# 6. PRUEBA
 # ─────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -438,7 +446,7 @@ if __name__ == "__main__":
         sys.stdout = f
 
         print("#"*60)
-        print("  EJEMPLO 1: Secuencias cortas clásicas")
+        print(" ALINEAMIENTO MULTIPLE")
         print("#"*60)
         names1 = ["S1", "S2", "S3", "S4","S5"]
         steps_tree = build_guide_tree(seqs, names1)
@@ -452,5 +460,5 @@ if __name__ == "__main__":
     try:
         draw_tree(steps_tree, names1)
     except ImportError:
-        print("Nota: Instala matplotlib y scipy si deseas el gráfico en PNG.")
-    print(f"✓ Resultados guardados en: {OUTPUT_FILE}")
+        print("Error al generar el gráfico en PNG.")
+    print(f"Resultados guardados en: {OUTPUT_FILE}")
