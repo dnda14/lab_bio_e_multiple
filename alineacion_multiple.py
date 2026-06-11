@@ -187,6 +187,74 @@ def build_guide_tree(sequences: list[list], names: list[str]) -> list:
 
     return merge_steps
 
+import matplotlib.pyplot as plt
+import networkx as nx
+
+def draw_tree(merge_steps: list, names: list[str]):
+    """
+    Dibuja el árbol guía de manera robusta usando NetworkX basándose 
+    estrictamente en los nombres de las fusiones. Evita errores de SciPy.
+    """
+    G = nx.DiGraph()
+    
+    # 1. Construir las relaciones del árbol de arriba hacia abajo
+    for step in merge_steps:
+        padre = step['name']
+        hijo_izq = step['left_name']
+        hijo_der = step['right_name']
+        distancia = step['dist']
+        
+        # Añadir aristas (etiquetadas con la distancia si se desea)
+        G.add_edge(padre, hijo_izq, weight=distancia)
+        G.add_edge(padre, hijo_der, weight=distancia)
+
+    # 2. Algoritmo para posicionar los nodos jerárquicamente de forma automática
+    def asignar_posiciones(grafo, nodo, pos={}, x=0, y=0, layer_width=1.0):
+        pos[nodo] = (x, y)
+        hijos = list(grafo.successors(nodo))
+        if len(hijos) == 2:
+            # El hijo izquierdo va un poco a la izquierda, el derecho a la derecha
+            asignar_posiciones(grafo, hijos[0], pos, x - layer_width/2, y - 1, layer_width/2)
+            asignar_posiciones(grafo, hijos[1], pos, x + layer_width/2, y - 1, layer_width/2)
+        return pos
+
+    # La raíz es el último nodo creado en las fusiones
+    raiz = merge_steps[-1]['name']
+    posiciones = asignar_posiciones(G, raiz)
+
+    # 3. Clasificar nodos para darles un aspecto limpio y estilizado
+    nodos_hoja = [n for n in G.nodes if n in names]
+    nodos_internos = [n for n in G.nodes if n not in names]
+
+    plt.figure(figsize=(10, 6))
+    
+    # Dibujar las ramas (líneas conectoras)
+    nx.draw_networkx_edges(G, posiciones, edge_color="gray", width=2)
+
+    # Dibujar nodos internos (puntos de bifurcación evolutiva)
+    nx.draw_networkx_nodes(G, posiciones, nodelist=nodos_internos, 
+                           node_color="skyblue", node_size=300)
+
+    # Dibujar hojas (tus secuencias biológicas originales S1, S2...)
+    nx.draw_networkx_nodes(G, posiciones, nodelist=nodos_hoja, 
+                           node_color="lightgreen", node_size=500)
+
+    # Añadir los nombres de las secuencias y nodos
+    # Para las hojas mostramos el nombre limpio; para los internos, una etiqueta corta opcional
+    etiquetas = {n: n if n in names else "" for n in G.nodes}
+    nx.draw_networkx_labels(G, posiciones, labels=etiquetas, font_size=10, font_weight="bold")
+
+    # Añadir distancias en el gráfico (opcional, adorna las ramas)
+    # etiquetas_aristas = {(u, v): f"{d['weight']:.2f}" for u, v, d in G.edges(data=True)}
+    # nx.draw_networkx_edge_labels(G, posiciones, edge_labels=etiquetas_aristas, font_size=8)
+
+    plt.title("Árbol Guía de Alineación Múltiple (UPGMA)", fontsize=12, fontweight='bold')
+    plt.axis('off') # Ocultar los ejes cartesianos para que parezca un árbol limpio
+    
+    # Exportar de forma segura
+    plt.savefig("arbol_guia.png", bbox_inches='tight', dpi=300)
+    print("\n✓ ¡Árbol exportado con éxito mediante NetworkX a 'arbol_guia.png'!")
+    plt.show()
 
 # ─────────────────────────────────────────────
 # 4. ALINEACIÓN PROGRESIVA
@@ -373,9 +441,16 @@ if __name__ == "__main__":
         print("  EJEMPLO 1: Secuencias cortas clásicas")
         print("#"*60)
         names1 = ["S1", "S2", "S3", "S4","S5"]
+        steps_tree = build_guide_tree(seqs, names1)
         result1 = multiple_sequence_alignment(seqs, names1)
 
 
     # Restaurar stdout y confirmar
     sys.stdout = sys.__stdout__
+    
+    # Fuera del "with open" (para que no se rompa la interfaz gráfica de matplotlib):
+    try:
+        draw_tree(steps_tree, names1)
+    except ImportError:
+        print("Nota: Instala matplotlib y scipy si deseas el gráfico en PNG.")
     print(f"✓ Resultados guardados en: {OUTPUT_FILE}")
