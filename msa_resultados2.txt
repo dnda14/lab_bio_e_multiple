@@ -1,0 +1,76 @@
+############################################################
+  MSA con LCS + clasificación (indel vs sustitución)
+############################################################
+
+============================================================
+  SECUENCIAS DE ENTRADA
+============================================================
+      S1: ATTGGCACCA
+      S2: ATTTGGACCA
+      S3: TGGTTCCA
+      S4: ATTCCACCAC
+
+============================================================
+  CONSTRUCCIÓN DEL ÁRBOL GUÍA (UPGMA + LCS)
+============================================================
+
+  Paso 1 — Matriz de distancias:
+                 S1        S2        S3        S4
+       S1       ---     0.000     2.000     1.000
+       S2     0.000       ---     0.000     2.000
+       S3     2.000     0.000       ---     1.000
+       S4     1.000     2.000     1.000       ---
+
+  → Fusionando: S1 + S2  [distancia = 0.000]  →  (S1,S2)
+
+  Paso 2 — Matriz de distancias:
+                 S3        S4   (S1,S2)
+       S3       ---     1.000     1.500
+       S4     1.000       ---     1.500
+  (S1,S2)     1.500     1.500       ---
+
+  → Fusionando: S3 + S4  [distancia = 1.000]  →  (S3,S4)
+
+  Paso 3 — Matriz de distancias:
+            (S1,S2)   (S3,S4)
+  (S1,S2)       ---     1.250
+  (S3,S4)     1.250       ---
+
+  → Fusionando: (S1,S2) + (S3,S4)  [distancia = 1.250]  →  ((S1,S2),(S3,S4))
+
+============================================================
+  ALINEACIÓN PROGRESIVA
+============================================================
+
+  Fusionando: S1  +  S2  →  (S1,S2)
+  Resultado (2 secuencias, longitud 11):
+        S1: AXTTGGCACCA
+        S2: ATTTGGXACCA
+
+  Fusionando: S3  +  S4  →  (S3,S4)
+  Resultado (2 secuencias, longitud 12):
+        S3: XTGGTTXXCCAX
+        S4: ATXXTCCACCAC
+
+  Fusionando: (S1,S2)  +  (S3,S4)  →  ((S1,S2),(S3,S4))
+  Resultado (4 secuencias, longitud 14):
+        S1: AXXXTTGGXCACCA
+        S2: ATXXTTGGXXACCA
+        S3: XTGGTTXXCCAXXX
+        S4: ATXXTCCACCACXX
+
+============================================================
+  ALINEACIÓN FINAL (con X = indel/hueco)
+============================================================
+      S1: AXXXTTGGXCACCA
+      S2: ATXXTTGGXXACCA
+      S3: XTGGTTXXCCAXXX
+      S4: ATXXTCCACCACXX
+
+============================================================
+  ALINEACIÓN FINAL (X reemplazados por -)
+============================================================
+      S1: A---TTGG-CACCA
+      S2: AT--TTGG--ACCA
+      S3: -TGGTT--CCA---
+      S4: AT--TCCACCAC--

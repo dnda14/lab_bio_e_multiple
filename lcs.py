@@ -1,7 +1,7 @@
 """
 Alineación de Múltiples Secuencias (MSA)
 Implementación con:
-  - Needleman-Wunsch modificado (soporte para X)
+  - LCS + clasificación (lógica manual del usuario)
   - Árbol guía UPGMA
   - Fusión progresiva de secuencias
 """
@@ -16,67 +16,127 @@ def leer(filename):
         return "".join(line.strip() for line in lines[1:])
     else:
         return lines[0].strip()
-        
+
+
 # ─────────────────────────────────────────────
-# 1. NEEDLEMAN-WUNSCH MODIFICADO (con X)
+# 1. LCS + CLASIFICACIÓN (lógica del usuario)
 # ─────────────────────────────────────────────
 
-def cost(a: str, b: str) -> int:
+def lcs_matrix(seq1: list, seq2: list) -> np.ndarray:
     """
-    Modelo de costo unitario con soporte para X (gap profile):
-      s(a, a) = 0
-      s(a, b) = 1  (a != b, ninguno es X)
-      s(X, ·) = 0  (X no añade penalización)
-    """
-    a, b = a.upper(), b.upper()
-    if a == 'X' or b == 'X':
-        return 0
-    return 0 if a == b else 1
-
-
-def needleman_wunsch(seq1: list, seq2: list, gap_penalty: int = 1) -> tuple:
-    """
-    Needleman-Wunsch que acepta listas de caracteres (soporta 'X').
-    Retorna (score_distancia, seq1_alineada, seq2_alineada).
+    Construye la matriz LCS (Longest Common Subsequence).
+    Ignora X al comparar (X hace match con todo, costo 0).
     """
     n, m = len(seq1), len(seq2)
-
-    # Matriz de programación dinámica
     dp = np.zeros((n + 1, m + 1), dtype=int)
-    dp[0, :] = [j * gap_penalty for j in range(m + 1)]
-    dp[:, 0] = [i * gap_penalty for i in range(n + 1)]
-
     for i in range(1, n + 1):
         for j in range(1, m + 1):
-            match   = dp[i-1][j-1] + cost(seq1[i-1], seq2[j-1])
-            delete  = dp[i-1][j]   + gap_penalty
-            insert  = dp[i][j-1]   + gap_penalty
-            dp[i][j] = min(match, delete, insert)
+            a, b = seq1[i-1].upper(), seq2[j-1].upper()
+            if a == b or a == 'X' or b == 'X':
+                dp[i][j] = dp[i-1][j-1] + 1
+            else:
+                dp[i][j] = max(dp[i-1][j], dp[i][j-1])
+    return dp
 
-    # Traceback
-    a1, a2 = [], []
-    i, j = n, m
+
+def lcs_traceback(seq1: list, seq2: list, dp: np.ndarray) -> tuple:
+    """
+    Traceback del LCS.
+    Retorna (matched1, matched2) — índices de los caracteres que forman el LCS.
+    """
+    matched1, matched2 = [], []
+    i, j = len(seq1), len(seq2)
     while i > 0 and j > 0:
-        sc = dp[i][j]
-        if sc == dp[i-1][j-1] + cost(seq1[i-1], seq2[j-1]):
-            a1.append(seq1[i-1])
-            a2.append(seq2[j-1])
+        a, b = seq1[i-1].upper(), seq2[j-1].upper()
+        if a == b or a == 'X' or b == 'X':
+            matched1.append(i - 1)
+            matched2.append(j - 1)
             i -= 1; j -= 1
-        elif sc == dp[i-1][j] + gap_penalty:
-            a1.append(seq1[i-1])
-            a2.append('-')
+        elif dp[i-1][j] >= dp[i][j-1]:
             i -= 1
         else:
-            a1.append('-')
-            a2.append(seq2[j-1])
             j -= 1
-    while i > 0:
-        a1.append(seq1[i-1]); a2.append('-'); i -= 1
-    while j > 0:
-        a1.append('-'); a2.append(seq2[j-1]); j -= 1
+    matched1.reverse()
+    matched2.reverse()
+    return matched1, matched2
 
-    a1.reverse(); a2.reverse()
-    return dp[n][m], a1, a2
+
+def align_lcs(seq1: list, seq2: list) -> tuple:
+    """
+    Alinea dos secuencias usando LCS + clasificación:
+      - Posiciones que coinciden en el LCS → match (costo 0)
+      - Lo que queda 'al aire':
+          * solo seq1 tiene algo  → inserción en seq1 / deleción en seq2  → X en seq2
+          * solo seq2 tiene algo  → inserción en seq2 / deleción en seq1  → X en seq1
+          * ambas tienen algo diferente → sustitución → X en ambas (costo 0)
+
+    Retorna (distancia, a1_alineada, a2_alineada)
+      distancia = número de sustituciones reales (cuando ambas tienen algo distinto)
+    """
+    dp = lcs_matrix(seq1, seq2)
+    matched1, matched2 = lcs_traceback(seq1, seq2, dp)
+
+    # Conjuntos de índices que participan en el LCS
+    set1 = set(matched1)
+    set2 = set(matched2)
+
+    # Índices que quedaron fuera del LCS
+    unmatched1 = [i for i in range(len(seq1)) if i not in set1]
+    unmatched2 = [j for j in range(len(seq2)) if j not in set2]
+
+    # Construir la alineación intercalando:
+    # segmentos no-LCS entre cada par de posiciones LCS
+    a1, a2 = [], []
+    substitutions = 0
+
+    prev_m1, prev_m2 = -1, -1
+
+    for k in range(len(matched1)):
+        m1, m2 = matched1[k], matched2[k]
+
+        # Segmento no-LCS antes de este match
+        gap1 = [i for i in range(prev_m1 + 1, m1)]  # índices en seq1 sin match
+        gap2 = [j for j in range(prev_m2 + 1, m2)]  # índices en seq2 sin match
+
+        # Clasificar lo que quedó al aire
+        while gap1 or gap2:
+            if gap1 and gap2:
+                # Ambas tienen algo → sustitución
+                a1.append(seq1[gap1.pop(0)])
+                a2.append(seq2[gap2.pop(0)])
+                substitutions += 1
+            elif gap1:
+                # Solo seq1 tiene → deleción en seq2 (inserción en seq1)
+                a1.append(seq1[gap1.pop(0)])
+                a2.append('X')
+            else:
+                # Solo seq2 tiene → deleción en seq1 (inserción en seq2)
+                a1.append('X')
+                a2.append(seq2[gap2.pop(0)])
+
+        # Agregar el match
+        a1.append(seq1[m1])
+        a2.append(seq2[m2])
+        prev_m1, prev_m2 = m1, m2
+
+    # Segmento final después del último match
+    gap1 = list(range(prev_m1 + 1, len(seq1)))
+    gap2 = list(range(prev_m2 + 1, len(seq2)))
+    while gap1 or gap2:
+        if gap1 and gap2:
+            a1.append(seq1[gap1.pop(0)])
+            a2.append(seq2[gap2.pop(0)])
+            substitutions += 1
+        elif gap1:
+            a1.append(seq1[gap1.pop(0)])
+            a2.append('X')
+        else:
+            a1.append('X')
+            a2.append(seq2[gap2.pop(0)])
+
+    # Distancia = solo sustituciones reales (indels no cuentan)
+    distance = substitutions
+    return distance, a1, a2
 
 
 # ─────────────────────────────────────────────
@@ -84,21 +144,12 @@ def needleman_wunsch(seq1: list, seq2: list, gap_penalty: int = 1) -> tuple:
 # ─────────────────────────────────────────────
 
 def seq_distance(s1: list, s2: list) -> float:
-    """Distancia NW normalizada entre dos secuencias."""
-    score, _, _ = needleman_wunsch(s1, s2)
+    """Distancia LCS entre dos secuencias (solo sustituciones reales)."""
+    score, _, _ = align_lcs(s1, s2)
     return score
 
 
-def group_distance_to_seq(group: list[list], seq: list) -> float:
-    """
-    Distancia de una secuencia a un grupo (media de distancias individuales).
-    Usa NW modificado con soporte X.
-    """
-    dists = [seq_distance(member, seq) for member in group]
-    return sum(dists) / len(dists)
-
-
-def group_distance(g1: list[list], g2: list[list]) -> float:
+def group_distance(g1: list, g2: list) -> float:
     """Distancia UPGMA entre dos grupos."""
     total, count = 0, 0
     for s1 in g1:
@@ -112,20 +163,13 @@ def group_distance(g1: list[list], g2: list[list]) -> float:
 # 3. CONSTRUCCIÓN DEL ÁRBOL GUÍA (UPGMA)
 # ─────────────────────────────────────────────
 
-def build_guide_tree(sequences: list[list], names: list[str]) -> list:
-    """
-    Construye el árbol guía usando UPGMA con NW.
-    Retorna lista de pasos de fusión: [(nombre_grupo, dist, idx_i, idx_j), ...]
-    """
-    n = len(sequences)
-
-    # Cada cluster inicial contiene una sola secuencia
-    clusters     = [[seq] for seq in sequences]
+def build_guide_tree(sequences: list, names: list) -> list:
+    clusters      = [[seq] for seq in sequences]
     cluster_names = list(names)
     merge_steps   = []
 
     print("\n" + "="*60)
-    print("  CONSTRUCCIÓN DEL ÁRBOL GUÍA (UPGMA + NW)")
+    print("  CONSTRUCCIÓN DEL ÁRBOL GUÍA (UPGMA + LCS)")
     print("="*60)
 
     step = 0
@@ -133,7 +177,6 @@ def build_guide_tree(sequences: list[list], names: list[str]) -> list:
         step += 1
         k = len(clusters)
 
-        # Calcular matriz de distancias
         dist_matrix = np.full((k, k), np.inf)
         for i in range(k):
             for j in range(i+1, k):
@@ -153,7 +196,7 @@ def build_guide_tree(sequences: list[list], names: list[str]) -> list:
                     row += f"{dist_matrix[i][j]:>10.3f}"
             print(row)
 
-        # Encontrar el par con menor distancia
+        # Par con menor distancia
         min_d = np.inf
         best_i, best_j = 0, 1
         for i in range(k):
@@ -167,16 +210,13 @@ def build_guide_tree(sequences: list[list], names: list[str]) -> list:
               f"[distancia = {min_d:.3f}]  →  {new_name}")
 
         merge_steps.append({
-            'name':  new_name,
-            'dist':  min_d,
-            'left':  best_i,
-            'right': best_j,
+            'name':       new_name,
+            'dist':       min_d,
             'left_name':  cluster_names[best_i],
             'right_name': cluster_names[best_j],
         })
 
-        # Fusionar clusters
-        new_cluster = clusters[best_i] + clusters[best_j]
+        new_cluster  = clusters[best_i] + clusters[best_j]
         new_clusters = [clusters[i] for i in range(k) if i not in (best_i, best_j)]
         new_names    = [cluster_names[i] for i in range(k) if i not in (best_i, best_j)]
         new_clusters.append(new_cluster)
@@ -192,19 +232,17 @@ def build_guide_tree(sequences: list[list], names: list[str]) -> list:
 # 4. ALINEACIÓN PROGRESIVA
 # ─────────────────────────────────────────────
 
-def align_two_groups(group1: list[list], group2: list[list]) -> tuple[list[list], list[list]]:
+def align_two_groups(group1: list, group2: list) -> tuple:
     """
-    Alinea dos grupos de secuencias (ya alineadas internamente).
-    Estrategia: usa los perfiles (sustituye gaps interiores por X) para guiar la alineación,
-    luego aplica los mismos gaps a todas las secuencias del grupo.
+    Alinea dos grupos usando LCS.
+    Representante de cada grupo = primera secuencia (X actúa como comodín).
+    Propaga los mismos gaps a todas las secuencias del grupo.
     """
-    # Representante de cada grupo: primera secuencia (las X actúan como comodines)
-    rep1 = [('X' if c == '-' else c) for c in group1[0]]
-    rep2 = [('X' if c == '-' else c) for c in group2[0]]
+    rep1 = list(group1[0])
+    rep2 = list(group2[0])
 
-    _, a1, a2 = needleman_wunsch(rep1, rep2)
+    _, a1, a2 = align_lcs(rep1, rep2)
 
-    # Reconstruir la posición de gaps introducidos en rep1
     gaps1 = _gap_positions(rep1, a1)
     gaps2 = _gap_positions(rep2, a2)
 
@@ -214,36 +252,30 @@ def align_two_groups(group1: list[list], group2: list[list]) -> tuple[list[list]
     return new_group1, new_group2
 
 
-def _gap_positions(original: list, aligned: list) -> list[int]:
-    """Devuelve las posiciones (en el alineado) donde se insertaron gaps."""
-    gap_positions = []
+def _gap_positions(original: list, aligned: list) -> list:
+    """Posiciones donde se insertaron X/gaps nuevos en el alineado."""
+    positions = []
     orig_idx = 0
     for pos, ch in enumerate(aligned):
-        if ch == '-':
-            gap_positions.append(pos)
+        if orig_idx >= len(original) or ch != original[orig_idx]:
+            positions.append(pos)
         else:
             orig_idx += 1
-    return gap_positions
+    return positions
 
 
-def _insert_gaps(seq: list, gap_positions: list[int]) -> list:
-    """Inserta gaps ('-') en las posiciones indicadas de la secuencia."""
+def _insert_gaps(seq: list, gap_positions: list) -> list:
     result = list(seq)
     for pos in gap_positions:
-        result.insert(pos, '-')
+        result.insert(pos, 'X')
     return result
 
 
-def progressive_alignment(sequences: list[list], names: list[str],
-                           merge_steps: list) -> list[list]:
-    """
-    Fusiona secuencias siguiendo el árbol guía.
-    """
+def progressive_alignment(sequences: list, names: list, merge_steps: list) -> list:
     print("\n" + "="*60)
     print("  ALINEACIÓN PROGRESIVA")
     print("="*60)
 
-    # Grupos iniciales: cada secuencia en su propio grupo
     groups = {name: [list(seq)] for name, seq in zip(names, sequences)}
 
     for step in merge_steps:
@@ -257,28 +289,23 @@ def progressive_alignment(sequences: list[list], names: list[str],
         print(f"\n  Fusionando: {left}  +  {right}  →  {new}")
         g1_aligned, g2_aligned = align_two_groups(g1, g2)
 
-        # Unificar longitud (por si queda diferencia de 1 por traceback)
         max_len = max(len(s) for s in g1_aligned + g2_aligned)
         for s in g1_aligned + g2_aligned:
             while len(s) < max_len:
-                s.append('-')
+                s.append('X')
 
         groups[new] = g1_aligned + g2_aligned
 
-        # Mostrar alineación parcial
         print(f"  Resultado ({len(groups[new])} secuencias, longitud {max_len}):")
-        merged_names = _get_leaf_names(left, merge_steps, names) + \
-                       _get_leaf_names(right, merge_steps, names)
+        merged_names = (_get_leaf_names(left,  merge_steps, names) +
+                        _get_leaf_names(right, merge_steps, names))
         for mname, seq in zip(merged_names, groups[new]):
             print(f"    {mname:>6}: {''.join(seq)}")
 
-    # Retornar el grupo final
-    final_key = merge_steps[-1]['name']
-    return groups[final_key]
+    return groups[merge_steps[-1]['name']]
 
 
-def _get_leaf_names(node: str, merge_steps: list, original_names: list) -> list[str]:
-    """Obtiene los nombres hoja de un nodo del árbol."""
+def _get_leaf_names(node: str, merge_steps: list, original_names: list) -> list:
     if node in original_names:
         return [node]
     for step in merge_steps:
@@ -293,13 +320,8 @@ def _get_leaf_names(node: str, merge_steps: list, original_names: list) -> list[
 # 5. PIPELINE COMPLETO
 # ─────────────────────────────────────────────
 
-def multiple_sequence_alignment(sequences: list[str],
-                                 names: list[str] = None) -> list[str]:
-    """
-    Alineación de múltiples secuencias completa.
-    Retorna lista de secuencias alineadas (sin X).
-    """
-    if names is None or len(names) != len(sequences):
+def multiple_sequence_alignment(sequences: list, names: list = None) -> list:
+    if names is None:
         names = [f"S{i+1}" for i in range(len(sequences))]
 
     seq_lists = [list(s.upper()) for s in sequences]
@@ -310,72 +332,57 @@ def multiple_sequence_alignment(sequences: list[str],
     for name, seq in zip(names, sequences):
         print(f"  {name:>6}: {seq.upper()}")
 
-    # 1. Árbol guía
-    merge_steps = build_guide_tree(seq_lists, names)
-
-    # 2. Alineación progresiva
+    merge_steps    = build_guide_tree(seq_lists, names)
     aligned_groups = progressive_alignment(seq_lists, names, merge_steps)
 
-    # 3. Obtener orden original de secuencias
-    leaf_order = _get_leaf_names(merge_steps[-1]['name'], merge_steps, names)
-    name_to_aligned = {name: seq for name, seq in zip(leaf_order, aligned_groups)}
+    leaf_order      = _get_leaf_names(merge_steps[-1]['name'], merge_steps, names)
+    name_to_aligned = {n: s for n, s in zip(leaf_order, aligned_groups)}
 
-    # 4. Mostrar resultados con X
-    print("\n" + "="*60)
-    print("  ALINEACIÓN FINAL (con X internos)")
-    print("="*60)
     max_len = max(len(s) for s in aligned_groups)
-    for name in names:
-        seq = name_to_aligned.get(name, [])
-        while len(seq) < max_len:
-            seq.append('-')
-        print(f"  {name:>6}: {''.join(seq)}")
 
-    # 5. Remover X y mostrar resultado limpio
-    clean = []
+    print("\n" + "="*60)
+    print("  ALINEACIÓN FINAL (con X = indel/hueco)")
+    print("="*60)
     for name in names:
         seq = name_to_aligned.get(name, [])
         while len(seq) < max_len:
-            seq.append('-')
-        cleaned = ''.join(c if c != 'X' else '-' for c in seq)
-        clean.append(cleaned)
+            seq.append('X')
+        print(f"  {name:>6}: {''.join(seq)}")
 
     print("\n" + "="*60)
     print("  ALINEACIÓN FINAL (X reemplazados por -)")
     print("="*60)
-    for name, seq in zip(names, clean):
-        print(f"  {name:>6}: {seq}")
+    clean = []
+    for name in names:
+        seq = name_to_aligned.get(name, [])
+        while len(seq) < max_len:
+            seq.append('X')
+        cleaned = ''.join(c if c != 'X' else '-' for c in seq)
+        clean.append(cleaned)
+        print(f"  {name:>6}: {cleaned}")
 
     return clean
 
 
 # ─────────────────────────────────────────────
-# 6. EJEMPLOS
+# 6. MAIN
 # ─────────────────────────────────────────────
 
 if __name__ == "__main__":
     import sys
-    import os
 
-    INPUT_FOLDER = "muestras/"
-    OUTPUT_FILE = "msa_resultados.txt"
-    seqs  = []
-    archivos = os.listdir(INPUT_FOLDER)
-    for i in archivos:
-        seqs.append(leer(INPUT_FOLDER+i))
-    
-    seqs2 = ["ATTGGCACCA","ATTTGGACCA","TGGTTCCA","ATTCCACCAC"]
-    # Redirigir toda la salida estándar al archivo .txt
+    OUTPUT_FILE = "msa_resultados2.txt"
+
+    seqs  = ["ATTGGCACCA", "ATTTGGACCA", "TGGTTCCA", "ATTCCACCAC"]
+    names = ["S1", "S2", "S3", "S4"]
+
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         sys.stdout = f
 
         print("#"*60)
-        print("  EJEMPLO 1: Secuencias cortas clásicas")
+        print("  MSA con LCS + clasificación (indel vs sustitución)")
         print("#"*60)
-        names1 = [f"S{i+1}" for i in range(len(seqs))]
-        result1 = multiple_sequence_alignment(seqs, names1)
+        result = multiple_sequence_alignment(seqs, names)
 
-
-    # Restaurar stdout y confirmar
     sys.stdout = sys.__stdout__
-    print(f"[OK] Resultados guardados en: {OUTPUT_FILE}")
+    print(f"✓ Resultados guardados en: {OUTPUT_FILE}")
